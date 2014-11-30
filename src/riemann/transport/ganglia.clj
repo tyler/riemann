@@ -1,7 +1,8 @@
 (ns riemann.transport.ganglia
   (:import (org.jboss.netty.channel MessageEvent)
            [org.jboss.netty.handler.codec.oneone OneToOneDecoder])
-  (:use [riemann.core :only [stream!]]
+  (:use [clojure.tools.logging :only [warn info]]
+        [riemann.core :only [stream!]]
         [riemann.transport.udp :only [udp-server
                                       gen-udp-handler]]
         [riemann.transport :only [channel-pipeline-factory
@@ -16,6 +17,7 @@
 
 (def slope-map
   { :zero 0, :positive 1, :negative 2, :both 3, :unspecified 4 })
+
 
 (def gmetric-codec
   "A gloss-based codec for decoding gmetric-formatted packets.
@@ -42,6 +44,29 @@
                                                     (repeat 
                                                      (mod (- 4 (mod n 4)) 4) "\000"))))
                            (fn [body] body)) ; TODO: fake :(
+
+        to-float (fn [x]
+                   (if (= (type x) java.lang.String)
+                     (Float. x)
+                     (float x)))
+
+        datapoint-frame
+        (fn [type-name type-codec]
+          (compile-frame
+           (ordered-map :packet-type :datapoint
+                        :host xdr-string
+                        :service xdr-string
+                        :spoofed xdr-bool
+                        :format-string xdr-string
+                        :type type-name
+                        :metric type-codec)
+           (fn [n] n)
+           (fn [msg] (if (= (:packet-type msg) :datapoint)
+                       (assoc msg
+                         :metric (to-float (:metric msg))
+                         :time (unix-time))))))
+        
+
         metadata-frame (compile-frame
                         (ordered-map :packet-type :metadata
                                      :host xdr-string
@@ -55,25 +80,18 @@
                                      :dmax xdr-uint
                                      :extras (repeated [xdr-string xdr-string]
                                                        :prefix :int32)))
-        datapoint-frame (compile-frame
-                         (ordered-map :packet-type :datapoint
-                                      :host xdr-string
-                                      :service xdr-string
-                                      :spoofed xdr-bool
-                                      :format-string xdr-string
-                                      :metric xdr-string)
-                         (fn [n] n)
-                         (fn [msg] (if (= (:packet-type msg) :datapoint)
-                                     (assoc msg
-                                       :metric (Float. (:metric msg))
-                                       :time (unix-time)))))
+
         gmetric-frame (compile-frame
                        (header
-                        (xdr-enum {:metadata 128, :datapoint 133})
-                        (fn [type]
-                          (cond
-                           (= type :metadata)  metadata-frame
-                           (= type :datapoint) datapoint-frame))
+                        (xdr-enum {metadata-frame                        128,
+                                   (datapoint-frame "uint16" :uint16)    129,
+                                   (datapoint-frame "int16" :int16)      130,
+                                   (datapoint-frame "int32" :int32)      131,
+                                   (datapoint-frame "uint32" :uint32)    132,
+                                   (datapoint-frame "string" xdr-string) 133, # TODO: barfs on non-numeric strings
+                                   (datapoint-frame "float32" :float32)  134,
+                                   (datapoint-frame "float64" :float64)  135})
+                        (fn [frame] frame)
                         (fn [body] body) ; TODO: doesn't matter, but this is not real
                         ))]
   
@@ -103,7 +121,11 @@
       (if parser-fn
         (merge res (parser-fn res))
         res))
-    (catch Exception e {:ok :true :service "exception"})))
+    (catch Exception e 
+      (let [ret {:ok :true :service "exception"}]
+        (warn e "Failed to decode Ganglia packet with type" (.getUnsignedInt packet 0))
+        (warn (vec (.array packet)))
+        ret))))
 
 
 (defn ganglia-frame-decoder
