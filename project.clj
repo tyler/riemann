@@ -44,8 +44,8 @@
     [clj-nsca "0.0.3"]
     [amazonica "0.2.26"]
     [capacitor "0.2.2"
-     :exclusions [http-kit]]]
-    [gloss "0.2.2"]
+     :exclusions [http-kit]]
+    [gloss "0.2.3"]
   ]
   :plugins [[codox "0.6.1"]
             [lein-rpm "0.0.5"]]
