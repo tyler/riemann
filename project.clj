@@ -45,6 +45,8 @@
     [amazonica "0.2.26"]
     [capacitor "0.2.2"
      :exclusions [http-kit]]]
+    [gloss "0.2.2"]
+  ]
   :plugins [[codox "0.6.1"]
             [lein-rpm "0.0.5"]]
   :profiles {:dev {:dependencies [[criterium "0.4.3"]
